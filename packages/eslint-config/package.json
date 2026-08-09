@@ -1,0 +1,13 @@
+{
+  "name": "@offerleaks/eslint-config",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "next.js",
+  "files": [
+    "next.js"
+  ],
+  "dependencies": {
+    "eslint-config-next": "^15.0.0"
+  }
+}
