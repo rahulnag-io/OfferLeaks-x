@@ -17,12 +17,33 @@ echo "=== Updating ClamAV virus definitions ==="
 # starting clamd so the daemon loads the latest available definitions.
 freshclam || echo "WARNING: freshclam failed; continuing with existing definitions if available."
 
-echo "=== Starting ClamAV daemon ==="
+echo "=== Starting ClamAV daemon (supervised) ==="
 
-clamd --config-file=/etc/clamav/clamd.conf &
-CLAMD_PID=$!
+# Previously `clamd` was launched once with `&` and never watched again --
+# if it died for any reason after startup (OOM kill being the most likely
+# cause in a shared-memory container), nothing noticed or restarted it,
+# and every upload silently failed with a connection error until the
+# whole container happened to restart. This loop replaces that: if clamd
+# exits for any reason, it's relaunched immediately rather than left dead
+# for the container's remaining lifetime.
+start_clamd() {
+    clamd --config-file=/etc/clamav/clamd.conf &
+    CLAMD_PID=$!
+    echo "clamd started with PID: $CLAMD_PID"
+}
 
-echo "clamd started with PID: $CLAMD_PID"
+start_clamd
+
+(
+    while true; do
+        wait "$CLAMD_PID" 2>/dev/null || true
+        echo "WARNING: clamd (pid $CLAMD_PID) exited unexpectedly -- restarting" >&2
+        sleep 1
+        start_clamd
+    done
+) &
+CLAMD_WATCHDOG_PID=$!
+echo "clamd watchdog started with PID: $CLAMD_WATCHDOG_PID"
 
 echo "=== Waiting for ClamAV readiness ==="
 
