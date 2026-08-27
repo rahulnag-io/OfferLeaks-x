@@ -1,16 +1,30 @@
 #!/bin/sh
 set -eu
 
-echo "Starting ClamAV database update..."
+echo "=== OfferLeaks startup ==="
 
-# Download/update virus definitions. Failure is logged, but we still
-# allow clamd to start in case a usable database already exists.
-freshclam || echo "WARNING: freshclam failed; attempting to start clamd with existing database."
+echo "ClamAV configuration:"
+echo "  Host: 127.0.0.1"
+echo "  Port: 3310"
 
-echo "Starting clamd..."
+# Ensure ClamAV directories exist and have the expected ownership.
+mkdir -p /var/lib/clamav
+chown -R clamav:clamav /var/lib/clamav /var/run/clamav 2>/dev/null || true
+
+echo "=== Updating ClamAV virus definitions ==="
+
+# freshclam normally runs as the clamav user. Run the update before
+# starting clamd so the daemon loads the latest available definitions.
+freshclam || echo "WARNING: freshclam failed; continuing with existing definitions if available."
+
+echo "=== Starting ClamAV daemon ==="
+
 clamd --config-file=/etc/clamav/clamd.conf &
+CLAMD_PID=$!
 
-echo "Waiting for ClamAV to become available..."
+echo "clamd started with PID: $CLAMD_PID"
+
+echo "=== Waiting for ClamAV readiness ==="
 
 python - <<'PY'
 import socket
@@ -19,29 +33,33 @@ import time
 
 host = "127.0.0.1"
 port = 3310
-timeout_seconds = 120
+timeout_seconds = 180
 
 deadline = time.time() + timeout_seconds
 
 while time.time() < deadline:
     try:
-        with socket.create_connection((host, port), timeout=2) as sock:
+        with socket.create_connection((host, port), timeout=3) as sock:
             sock.sendall(b"PING\n")
             response = sock.recv(1024)
 
             if b"PONG" in response:
                 print("ClamAV is ready.")
                 sys.exit(0)
-    except OSError:
-        pass
+
+            print(f"ClamAV returned unexpected response: {response!r}")
+
+    except OSError as exc:
+        print(f"Waiting for ClamAV: {exc}")
 
     time.sleep(2)
 
-print("ERROR: ClamAV did not become ready within 120 seconds.", file=sys.stderr)
+print("ERROR: ClamAV did not become ready within 180 seconds.", file=sys.stderr)
 sys.exit(1)
 PY
 
-echo "Starting OfferLeaks API..."
+echo "=== ClamAV ready ==="
+echo "=== Starting OfferLeaks API ==="
 
 exec uv run uvicorn offerleaks.main:app \
     --host 0.0.0.0 \
