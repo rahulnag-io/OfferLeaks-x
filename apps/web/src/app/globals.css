@@ -1,0 +1,85 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 210 33% 98%;
+    --foreground: 222 39% 11%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222 39% 11%;
+
+    --primary: 226 71% 40%;
+    --primary-700: 227 74% 32%;
+    --primary-foreground: 0 0% 100%;
+    --primary-50: 222 100% 97%;
+    --primary-100: 221 91% 93%;
+
+    --secondary: 214 32% 95%;
+    --secondary-foreground: 222 39% 15%;
+
+    --muted: 214 32% 95%;
+    --muted-foreground: 217 15% 42%;
+
+    --accent: 187 72% 32%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 356 75% 45%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 216 25% 89%;
+    --input: 216 25% 87%;
+    --ring: 226 71% 40%;
+
+    --safe: 158 64% 28%;
+    --safe-foreground: 158 64% 22%;
+    --safe-bg: 152 55% 95%;
+
+    --caution: 32 88% 38%;
+    --caution-foreground: 28 80% 30%;
+    --caution-bg: 45 93% 95%;
+
+    --risk: 356 68% 44%;
+    --risk-foreground: 356 68% 36%;
+    --risk-bg: 356 90% 96%;
+
+    --radius: 0.75rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+}
+
+@layer utilities {
+  /* Radial risk gauge -- set --gauge-value (0-100) and --gauge-color
+     inline. Used by <RiskScore variant="ring" />. */
+  .risk-gauge {
+    background: conic-gradient(
+      hsl(var(--gauge-color)) calc(var(--gauge-value, 0) * 1%),
+      hsl(var(--muted)) 0
+    );
+  }
+
+  .text-balance {
+    text-wrap: balance;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

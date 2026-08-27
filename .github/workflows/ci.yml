@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: offerleaks
+          POSTGRES_PASSWORD: offerleaks_dev
+          POSTGRES_DB: offerleaks
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql+asyncpg://offerleaks:offerleaks_dev@localhost:5432/offerleaks
+      REDIS_URL: redis://localhost:6379/0
+      API_URL: http://localhost:8000
+      # --- Auth (Version 2) --- CI-only values, never used outside this run.
+      JWT_SECRET_KEY: ci-only-jwt-secret-not-used-anywhere-else
+      INTERNAL_API_SECRET: ci-only-internal-secret-not-used-anywhere-else
+      AUTH_SECRET: ci-only-auth-secret-not-used-anywhere-else
+      AUTH_GOOGLE_ID: ci-placeholder-client-id
+      AUTH_GOOGLE_SECRET: ci-placeholder-client-secret
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "0.5"
+
+      - name: Install JS dependencies
+        run: npm ci
+
+      - name: Sync Python dependencies
+        working-directory: apps/api
+        run: uv sync --frozen
+
+      - name: Run database migrations
+        working-directory: apps/api
+        run: uv run alembic upgrade head
+
+      # turbo orchestrates both the JS/TS tasks and the thin Python
+      # wrapper in apps/api/package.json (see architecture.md §0.13),
+      # so one command covers lint/test across both languages.
+      - name: Lint
+        run: npx turbo run lint
+
+      - name: Type-check
+        run: npx turbo run type-check
+
+      - name: Test
+        run: npx turbo run test
+
+      - name: Build
+        run: npx turbo run build

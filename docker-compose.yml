@@ -1,0 +1,176 @@
+name: offerleaks
+
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: offerleaks
+      POSTGRES_PASSWORD: offerleaks_dev
+      POSTGRES_DB: offerleaks
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U offerleaks"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # --- Analyses (Version 3) ---
+
+  # S3-compatible object storage for local dev, matching the R2/S3 API
+  # `S3StorageProvider` speaks in every environment (architecture.md
+  # §0.4/§0.10) -- no separate "local storage" code path to maintain.
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: dev-only-access-key
+      MINIO_ROOT_PASSWORD: dev-only-secret-key
+    ports:
+      - "9000:9000" # S3 API -- matches STORAGE_ENDPOINT_URL in .env.example
+      - "9001:9001" # Web console
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Malware scanning gate before OCR (§0.11). The upstream image can take
+  # 1-2 minutes to become healthy on first run while it downloads virus
+  # definitions -- this is expected, not a hang.
+  clamav:
+    image: clamav/clamav-debian:latest
+    restart: unless-stopped
+    ports:
+      - "3310:3310" # matches CLAMAV_PORT in .env.example
+    volumes:
+      - clamav_data:/var/lib/clamav
+    healthcheck:
+      test: ["CMD", "clamdcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 180s
+
+  # Runs the RQ worker (`offerleaks.worker`) inside a Linux container.
+  # RQ's `Worker` relies on POSIX-only process supervision (os.fork /
+  # os.wait4), which native Windows doesn't have at all -- `worker.py`
+  # falls back to RQ's in-process `SimpleWorker` there for local
+  # iteration, but that gives up per-job isolation and timeout
+  # enforcement. This service is the production-faithful way to run the
+  # worker from Windows (or anywhere else) without that trade-off: same
+  # image as the API, same dependencies, just a different command.
+  #
+  # Optional for local dev -- omit `--profile worker` to leave analyses
+  # queued but unprocessed while you work on something else.
+  #
+  # Listens *only* to the `analysis` queue -- explicitly, via
+  # `--queues=analysis` -- so a slow or backed-up external company
+  # domain-age/reachability lookup on the separate `company_worker`
+  # below can never delay analysis processing behind it on this same
+  # process (a single worker consuming both queues, which is what an
+  # unqualified `python -m offerleaks.worker` does, can't actually
+  # guarantee that isolation even though the queues themselves are
+  # logically separate).
+  worker:
+    build:
+      context: ./apps/api
+    restart: unless-stopped
+    profiles: ["worker"]
+    command: ["uv", "run", "python", "-m", "offerleaks.worker", "--queues=analysis"]
+    env_file:
+      - ./apps/api/.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://offerleaks:offerleaks_dev@postgres:5432/offerleaks
+      REDIS_URL: redis://redis:6379/0
+      STORAGE_ENDPOINT_URL: http://minio:9000
+      CLAMAV_HOST: clamav
+      GOOGLE_APPLICATION_CREDENTIALS: /app/google-service-account.json
+    volumes:
+    - ./google-service-account.json:/app/google-service-account.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      clamav:
+        condition: service_healthy
+
+  # M7: dedicated worker for the `company_refresh` queue only (domain-age
+  # RDAP lookups, website-reachability checks) -- the other half of the
+  # isolation described on `worker` above. Doesn't need MinIO/ClamAV/
+  # Google credentials since it never touches OCR/AI/malware-scan/
+  # storage providers, only Postgres + Redis + outbound RDAP/HTTP.
+  #
+  # Optional for local dev, same as `worker`/`reconciler` -- omit
+  # `--profile worker` to leave company profiles unrefreshed while you
+  # work on something else (previously-resolved company data still
+  # displays; it just won't get any *newer* over time).
+  company_worker:
+    build:
+      context: ./apps/api
+    restart: unless-stopped
+    profiles: ["worker"]
+    command: ["uv", "run", "python", "-m", "offerleaks.worker", "--queues=company_refresh"]
+    env_file:
+      - ./apps/api/.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://offerleaks:offerleaks_dev@postgres:5432/offerleaks
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # Stuck-analysis recovery sweep. Same image as the API/worker, just a
+  # different command -- it never touches OCR/AI/storage/malware-scan
+  # providers directly, only the database, so it doesn't need MinIO/
+  # ClamAV or the Google credentials the worker service does. Runs
+  # `offerleaks.reconciliation`'s own sleep-loop (see that module) rather
+  # than relying on an external scheduler; swap the command for
+  # `["uv", "run", "python", "-m", "offerleaks.reconciliation", "--once"]`
+  # on a host cron / Kubernetes CronJob instead if that fits your ops
+  # setup better -- the sweep itself is safe to invoke either way (see
+  # `run_reconciliation_sweep`'s docstring on concurrent-sweep safety).
+  #
+  # Optional for local dev, same as `worker` -- omit `--profile worker`
+  # to leave stuck analyses unreconciled while you work on something else.
+  reconciler:
+    build:
+      context: ./apps/api
+    restart: unless-stopped
+    profiles: ["worker"]
+    command: ["uv", "run", "python", "-m", "offerleaks.reconciliation"]
+    env_file:
+      - ./apps/api/.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://offerleaks:offerleaks_dev@postgres:5432/offerleaks
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  minio_data:
+  clamav_data:
