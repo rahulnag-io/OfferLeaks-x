@@ -1,16 +1,6 @@
 # syntax=docker/dockerfile:1
 FROM python:3.12-slim AS base
 
-# Install ClamAV and the utilities required by the production startup.
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-        clamav \
-        clamav-daemon \
-        clamav-freshclam && \
-    rm -rf /var/lib/apt/lists/* && \
-    mkdir -p /var/lib/clamav /var/run/clamav && \
-    chown -R clamav:clamav /var/lib/clamav /var/run/clamav
-
 # uv is copied as a static binary rather than pip-installed.
 COPY --from=ghcr.io/astral-sh/uv:0.5 /uv /uvx /usr/local/bin/
 
@@ -30,12 +20,7 @@ COPY . .
 
 RUN uv sync --frozen --no-dev
 
-# Configure clamd to listen on localhost:3310.
-RUN sed -i \
-        -e 's/^#TCPSocket 3310/TCPSocket 3310/' \
-        -e 's/^#TCPAddr 127\.0\.0\.1/TCPAddr 127.0.0.1/' \
-        /etc/clamav/clamd.conf && \
-    chmod +x /app/start.sh
+RUN chmod +x /app/start.sh
 
 EXPOSE 8000
 

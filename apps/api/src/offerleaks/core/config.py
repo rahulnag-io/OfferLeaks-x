@@ -43,7 +43,9 @@ class Settings(BaseSettings):
     # whatever session mechanism the frontend uses (see architecture.md
     # §0.13) -- the backend never trusts a token it didn't mint and verify
     # itself.
-    jwt_secret_key: str = Field(default="dev-only-insecure-secret-change-me-in-production-please")
+    jwt_secret_key: str = Field(
+        default="dev-only-insecure-secret-change-me-in-production-please"
+    )
     jwt_algorithm: str = Field(default="HS256")
     jwt_issuer: str = Field(default="offerleaks-api")
     access_token_expire_minutes: int = Field(default=15)
@@ -105,18 +107,24 @@ class Settings(BaseSettings):
     ai_request_timeout_seconds: float = Field(default=60.0)
 
     # --- Malware scanning (Version 3) ---
-    # ClamAV daemon, reached over TCP -- gates every upload before it's
-    # persisted or handed to the OCR provider (§0.11 "file upload safety").
-    # Disabled only for local dev when no clamd is running; production
-    # must never run with this off (enforced in `create_analysis_service`,
-    # not just documented here).
+    # Cloudmersive's hosted Virus Scan API, reached over HTTPS -- gates
+    # every upload before it's persisted or handed to the OCR provider
+    # (§0.11 "file upload safety"). Previously ClamAV via a self-hosted
+    # `clamd` daemon; moved to a hosted scanner because `clamd`'s loaded-
+    # signature-database memory footprint doesn't fit alongside the API
+    # process on Render's 512MB free/Starter tier (see malware_scan.py's
+    # module docstring). Disabled only for local dev when no key is
+    # configured; production must never run with this off (enforced in
+    # `require_production_config` below, not just documented here).
     malware_scan_enabled: bool = Field(default=True)
-    clamav_host: str = Field(default="localhost")
-    clamav_port: int = Field(default=3310)
+    cloudmersive_api_key: str = Field(default="")
+    cloudmersive_request_timeout_seconds: float = Field(default=30.0)
 
     # --- Upload constraints (Version 3) ---
     max_upload_size_bytes: int = Field(default=15 * 1024 * 1024)  # 15 MB
-    allowed_upload_mime_types: str = Field(default="application/pdf,image/jpeg,image/png")
+    allowed_upload_mime_types: str = Field(
+        default="application/pdf,image/jpeg,image/png"
+    )
 
     # Background job queue (Redis-backed, per §0.7/§0.8) that OCR + AI
     # analysis run on -- never inline in the request/response cycle.
@@ -222,14 +230,18 @@ class Settings(BaseSettings):
     # background refresh (via the existing RQ worker) the next time it's
     # read -- it is still served as-is in the meantime (M7 DoD: a cache
     # hit never blocks on a second external lookup).
-    company_profile_stale_after_seconds: int = Field(default=7 * 24 * 60 * 60)  # 7 days
+    company_profile_stale_after_seconds: int = Field(
+        default=7 * 24 * 60 * 60
+    )  # 7 days
     # Redis acceleration layer TTL for a company profile. Deliberately
     # shorter than the Postgres staleness window above: Redis is free to
     # forget sooner (Postgres is authoritative and always repopulates it
     # on a cache miss, per M7's "cache survives restarts" requirement),
     # this just bounds how long a Redis-only cache entry lives before a
     # read falls back to Postgres.
-    company_profile_redis_ttl_seconds: int = Field(default=24 * 60 * 60)  # 1 day
+    company_profile_redis_ttl_seconds: int = Field(
+        default=24 * 60 * 60
+    )  # 1 day
 
     # Cost control (M7 §17): caps how many outbound domain-age/reachability
     # lookups the whole system will perform per minute, independent of how
@@ -269,16 +281,26 @@ class Settings(BaseSettings):
     @property
     def billing_configured(self) -> bool:
         return bool(
-            self.razorpay_key_id and self.razorpay_key_secret and self.razorpay_webhook_secret
+            self.razorpay_key_id
+            and self.razorpay_key_secret
+            and self.razorpay_webhook_secret
         )
 
     @property
     def cors_origin_list(self) -> list[str]:
-        return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+        return [
+            origin.strip()
+            for origin in self.cors_origins.split(",")
+            if origin.strip()
+        ]
 
     @property
     def allowed_upload_mime_type_set(self) -> set[str]:
-        return {t.strip() for t in self.allowed_upload_mime_types.split(",") if t.strip()}
+        return {
+            t.strip()
+            for t in self.allowed_upload_mime_types.split(",")
+            if t.strip()
+        }
 
     def require_production_config(self) -> None:
         """Fail fast on boot if a deployed (non-development) environment is
@@ -306,6 +328,8 @@ class Settings(BaseSettings):
             missing.append("JWT_SECRET_KEY")
         if not self.malware_scan_enabled:
             missing.append("MALWARE_SCAN_ENABLED (must be true outside development)")
+        elif not self.cloudmersive_api_key:
+            missing.append("CLOUDMERSIVE_API_KEY")
 
         # Billing is all-or-nothing: a production deploy with *some* but
         # not all three Razorpay values set is almost certainly a
@@ -320,7 +344,9 @@ class Settings(BaseSettings):
         }
         set_fields = [name for name, value in razorpay_fields.items() if value]
         if set_fields and len(set_fields) < len(razorpay_fields):
-            missing.extend(name for name in razorpay_fields if not razorpay_fields[name])
+            missing.extend(
+                name for name in razorpay_fields if not razorpay_fields[name]
+            )
 
         if missing:
             raise RuntimeError(

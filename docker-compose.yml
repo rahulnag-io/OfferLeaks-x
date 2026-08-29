@@ -30,7 +30,6 @@ services:
       retries: 5
 
   # --- Analyses (Version 3) ---
-
   # S3-compatible object storage for local dev, matching the R2/S3 API
   # `S3StorageProvider` speaks in every environment (architecture.md
   # §0.4/§0.10) -- no separate "local storage" code path to maintain.
@@ -51,23 +50,6 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
-
-  # Malware scanning gate before OCR (§0.11). The upstream image can take
-  # 1-2 minutes to become healthy on first run while it downloads virus
-  # definitions -- this is expected, not a hang.
-  clamav:
-    image: clamav/clamav-debian:latest
-    restart: unless-stopped
-    ports:
-      - "3310:3310" # matches CLAMAV_PORT in .env.example
-    volumes:
-      - clamav_data:/var/lib/clamav
-    healthcheck:
-      test: ["CMD", "clamdcheck.sh"]
-      interval: 30s
-      timeout: 10s
-      retries: 10
-      start_period: 180s
 
   # Runs the RQ worker (`offerleaks.worker`) inside a Linux container.
   # RQ's `Worker` relies on POSIX-only process supervision (os.fork /
@@ -101,18 +83,15 @@ services:
       DATABASE_URL: postgresql+asyncpg://offerleaks:offerleaks_dev@postgres:5432/offerleaks
       REDIS_URL: redis://redis:6379/0
       STORAGE_ENDPOINT_URL: http://minio:9000
-      CLAMAV_HOST: clamav
       GOOGLE_APPLICATION_CREDENTIALS: /app/google-service-account.json
     volumes:
-    - ./google-service-account.json:/app/google-service-account.json:ro
+      - ./google-service-account.json:/app/google-service-account.json:ro
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
       minio:
-        condition: service_healthy
-      clamav:
         condition: service_healthy
 
   # M7: dedicated worker for the `company_refresh` queue only (domain-age
@@ -173,4 +152,3 @@ services:
 volumes:
   postgres_data:
   minio_data:
-  clamav_data:

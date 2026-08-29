@@ -13,7 +13,7 @@ from offerleaks.core.config import Settings, get_settings
 from offerleaks.providers.ai import AIProvider, AnthropicProvider
 from offerleaks.providers.domain_age import DomainAgeProvider, RDAPDomainAgeProvider
 from offerleaks.providers.malware_scan import (
-    ClamdMalwareScanProvider,
+    CloudmersiveMalwareScanProvider,
     MalwareScanProvider,
     NullMalwareScanProvider,
 )
@@ -46,7 +46,7 @@ def get_malware_scan_provider() -> MalwareScanProvider:
     settings: Settings = get_settings()
     if not settings.malware_scan_enabled:
         return NullMalwareScanProvider()
-    return ClamdMalwareScanProvider(settings)
+    return CloudmersiveMalwareScanProvider(settings)
 
 
 @lru_cache
